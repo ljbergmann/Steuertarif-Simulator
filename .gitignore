@@ -1,0 +1,6 @@
+node_modules
+dist
+.idea
+*.local
+index.html
+src/main-embed.tsx

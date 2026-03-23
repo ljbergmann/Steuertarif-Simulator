@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:embed": "vite build --config vite.config.embed.ts",
     "preview": "vite preview --outDir dist/standalone"
   },
   "devDependencies": {

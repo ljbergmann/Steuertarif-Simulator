@@ -67,7 +67,11 @@ function formulaStr(zv, p) {
 function soli(e) { const fg = 18130; if (e <= fg) return 0; return Math.min(e * .055, (e - fg) * .119); }
 
 function reParams(base, ov, er = .14) {
-  const p = { ...base, ...ov }, zM = (p.zone3End - p.zone2End) / 1e4;
+  const p = { ...base, ...ov };
+  if (p.zone2End < p.grundfreibetrag) p.zone2End = p.grundfreibetrag;
+  if (p.zone3End < p.zone2End) p.zone3End = p.zone2End;
+  if (p.zone4End < p.zone3End) p.zone4End = p.zone3End;
+  const zM = (p.zone3End - p.zone2End) / 1e4;
   let az;
   if (p.zone2End <= p.grundfreibetrag + 1) { p.z_coeff_b = er * 1e4; az = zM > 0 ? (p.spitzensteuersatz * 1e4 - p.z_coeff_b) / (2 * zM) : p.z_coeff_a; p.z_coeff_a = az; }
   else { az = p.z_coeff_a; p.z_coeff_b = p.spitzensteuersatz * 1e4 - 2 * az * zM; }

@@ -1,6 +1,6 @@
 {
   "name": "32a",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "§32a EStG Steuertarif-Simulator 2026 — inkl. Splitting, Kinderfreibetrag & Kindergeld",
   "private": true,
   "type": "module",

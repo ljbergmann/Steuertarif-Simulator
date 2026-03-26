@@ -115,6 +115,7 @@ const PRE = {
   flat42: { l: "Flat 42% ab 60k", d: "Progressionszone bis 60k, dann 42%", o: { zone3End: 60000, spitzensteuersatz: .42 } },
   flat25: { l: "Flat Tax 25%", d: "Einheitssteuersatz 25% ab GFB (keine Progression)", o: { eingangssteuersatz: .25, zone2End: 12348, zone3End: 12348, spitzensteuersatz: .25, reichensteuersatz: .25, zone4End: 277825 } },
   gfb15: { l: "Grundfreibetrag 15.000€", d: "Höherer GFB, Zone 2 bis 20.000€", o: { grundfreibetrag: 15000, zone2End: 20000 } },
+  klingbeil: { l: "Klingbeil-Modell", d: "Mittelstandsbauch weg, kein Soli, 49% ab 75k, Individualbesteuerung", o: { zone2End: 12348, zone3End: 75000, spitzensteuersatz: .49, reichensteuersatz: .49, zone4End: 277825 }, ns: true, sm: "individuell" },
 };
 
 const f = n => Math.round(n).toLocaleString("de-DE");
@@ -123,9 +124,46 @@ const fm = n => { const m = n / 1e9; if (Math.abs(m) >= 1) return `${m >= 0 ? "+
 
 const ID = [[5e3,42e5],[1e4,48e5],[15e3,45e5],[2e4,42e5],[25e3,39e5],[3e4,34e5],[35e3,3e6],[4e4,26e5],[45e3,22e5],[5e4,18e5],[55e3,15e5],[6e4,12e5],[65e3,95e4],[7e4,75e4],[75e3,6e5],[8e4,48e4],[9e4,68e4],[1e5,45e4],[12e4,5e5],[15e4,32e4],[2e5,2e5],[3e5,1e5],[5e5,45e3],[1e6,18e3],[2e6,5e3],[5e6,1500]];
 
-function fiscal(bp, sp, ns) {
+const SPLIT_ANTEIL = .31; // ~31% der Steuerfälle nutzen Splittingtarif (Destatis LuESt 2021: 13,6 Mio. / 43,3 Mio.)
+// Einkommensverteilung unter Splitting-Paaren (Destatis StKl / Mikrozensus)
+// [Anteil innerhalb Splitting-Nutzer, Hauptverdiener-Anteil am Gesamteinkommen]
+const SPLIT_TYPEN = [[.22, 1.0], [.39, .70], [.36, .52], [.03, .55]]; // Alleinverdiener / III-V / IV-IV / Sonstige
+function fiscal(bp, sp, ns, splitMode) {
   let de = 0, ds = 0; const bk = [];
-  for (const [z, n] of ID) { const eB = est(z, bp), eS = est(z, sp), sB = soli(eB), sS = ns ? 0 : soli(eS); de += (eS - eB) * n; ds += (sS - sB) * n; bk.push({ z, n, dp: (eS + sS) - (eB + sB), tB: (eB + sB) * n, tS: (eS + sS) * n }); }
+  for (const [z, n] of ID) {
+    const eB_grund = est(z, bp);
+    const eS_grund = est(z, sp);
+    let eB, eS, sB_, sS_;
+    if (splitMode !== "splitting") {
+      // SQ: Splitting-Paare mit gewichteter Einkommensverteilung
+      const eB_split = 2 * est(Math.floor(z / 2), bp);
+      eB = eB_grund * (1 - SPLIT_ANTEIL) + eB_split * SPLIT_ANTEIL;
+      sB_ = soli(eB_grund) * (1 - SPLIT_ANTEIL) + soli(eB_split) * SPLIT_ANTEIL;
+      if (splitMode === "abschaffen") {
+        // Ersatzlos: Gesamteinkommen → 1 GFB
+        eS = eS_grund;
+        sS_ = ns ? 0 : soli(eS_grund);
+      } else {
+        // Individualbesteuerung: gewichteter Mix über Paar-Typen
+        let eS_indiv = 0, soliIndiv = 0;
+        for (const [w, r] of SPLIT_TYPEN) {
+          const z1 = Math.floor(z * r), z2 = z - z1;
+          const e1 = est(z1, sp), e2 = est(z2, sp);
+          eS_indiv += (e1 + e2) * w;
+          soliIndiv += (soli(e1) + soli(e2)) * w;
+        }
+        eS = eS_indiv * SPLIT_ANTEIL + eS_grund * (1 - SPLIT_ANTEIL);
+        sS_ = ns ? 0 : soliIndiv * SPLIT_ANTEIL + soli(eS_grund) * (1 - SPLIT_ANTEIL);
+      }
+    } else {
+      eB = eB_grund;
+      eS = eS_grund;
+      sB_ = soli(eB_grund);
+      sS_ = ns ? 0 : soli(eS_grund);
+    }
+    de += (eS - eB) * n; ds += (sS_ - sB_) * n;
+    bk.push({ z, n, dp: (eS + sS_) - (eB + sB_), tB: (eB + sB_) * n, tS: (eS + sS_) * n });
+  }
   return { t: de + ds, de, ds, bk };
 }
 
@@ -167,6 +205,8 @@ const SRCS = [
   { l: "§32 Abs. 6 EStG", d: "Kinderfreibetrag 2026: 9.756€ (6.828€ Existenzminimum + 2.928€ BEA)", u: "https://www.gesetze-im-internet.de/estg/__32.html" },
   { l: "§31 EStG", d: "Kindergeld-Günstigerprüfung: 259€/Monat vs. Kinderfreibetrag", u: "https://www.gesetze-im-internet.de/estg/__31.html" },
   { l: "§24b EStG", d: "Entlastungsbetrag Alleinerziehende: 4.260€ + 240€/weiteres Kind", u: "https://www.gesetze-im-internet.de/estg/__24b.html" },
+  { l: "DIW: Reform Ehegattensplitting", d: "~25,6 Mrd. € Mindereinnahmen p.a. durch Splitting (Bach/Fischer/Haan/Wrohlich 2020)", u: "https://www.diw.de/de/diw_01.c.800291.de/publikationen/wochenberichte/2020_41_1/reform_des_ehegattensplittings__realsplitting_mit_niedrigem_uebertragungsbetrag_ist_ein_guter_kompromiss.html" },
+  { l: "Destatis: Steuerklassenwahl", d: "~31% Zusammenveranlagung, 39% der Ehepaare in StKl III/V (2020/2021)", u: "https://www.destatis.de/DE/Presse/Pressemitteilungen/2024/07/PD24_287_73.html" },
   { l: "Mindestlohn 2026", d: "13,90€/h seit 01.01.2026 (MiLoG), Vollzeit 2.080h = 28.912€/Jahr", u: "https://www.bundesregierung.de/breg-de/aktuelles/mindestlohn-steigt-2391010" },
   { l: "Median-Bruttoeinkommen", d: "52.000€ Vollzeit (Stepstone Gehaltsreport 2026 / Destatis Verdiensterhebung 2024)", u: "https://www.stepstone.de/e-recruiting/gehalt/gehaltsreport-deutschlands-gehaelter-im-fokus/" },
   { l: "Quellcode (GitHub)", d: "Open Source — Rechenlogik, Tarifparameter und Methodik transparent einsehbar", u: "https://github.com/ljbergmann/Steuertarif-Simulator" },
@@ -183,7 +223,7 @@ function encSt(s) {
   if (s.z3 !== B26.zone3End) p.set("z3", s.z3); if (s.sp !== B26.spitzensteuersatz) p.set("sp", Math.round(s.sp * 1e3));
   if (s.rs !== B26.reichensteuersatz) p.set("rs", Math.round(s.rs * 1e3)); if (s.z4 !== B26.zone4End) p.set("z4", s.z4);
   if (s.er !== .14) p.set("er", Math.round(s.er * 1e3));
-  if (s.ns) p.set("ns", 1); if (s.ki) p.set("ki", s.ki);
+  if (s.ns) p.set("ns", 1); if (s.sm !== "splitting") p.set("sm", s.sm === "abschaffen" ? "a" : "i"); if (s.b2) p.set("b2", s.b2); if (s.ki) p.set("ki", s.ki);
   if (s.v !== "einzel") p.set("v", "z"); if (s.kd > 0) p.set("kd", s.kd); if (s.ae) p.set("ae", 1);
   if (s.ea !== "a") p.set("ea", s.ea);
   return p.toString();
@@ -203,6 +243,8 @@ function decURL() {
     z4: parseInt(p.get("z4")) || B26.zone4End,
     er: p.has("er") ? parseInt(p.get("er")) / 1e3 : .14,
     ns: p.get("ns") === "1",
+    sm: p.get("sm") === "a" ? "abschaffen" : p.get("sm") === "i" ? "individuell" : p.get("ks") === "1" ? "abschaffen" : "splitting",
+    b2: parseInt(p.get("b2")) || 0,
     b: parseInt(p.get("b")) || null,
     ki: parseInt(p.get("ki")) || 0,
     v: p.get("v") === "z" ? "zusammen" : "einzel",
@@ -217,8 +259,8 @@ function decURL() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const C = {
-  bg: "#fafaf8", card: "#ffffff", border: "#e8e5df", text: "#1a1a1a", sub: "#6b6560", light: "#9c9590",
-  blue: "#2563a0", orange: "#c2590a", green: "#1a7a3a", red: "#b91c2c", accent: "#c2590a",
+  bg: "#fafaf8", card: "#ffffff", border: "#e8e5df", text: "#1a1a1a", sub: "#524d48", light: "#78726b",
+  blue: "#1d5088", orange: "#a84a08", green: "#15632f", red: "#9e1826", accent: "#a84a08",
   cardHover: "#f5f3ef", tag: "#f0ece6",
 };
 
@@ -325,6 +367,8 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
   const [z4, sZ4] = useState(init?.z4 || (defPre.zone4End ?? B26.zone4End));
   const [er, sER] = useState(init ? (init.er || .14) : (defPre.eingangssteuersatz ?? .14));
   const [ns, sNS] = useState(init?.ns || false);
+  const [splitMode, setSplitMode] = useState(init?.sm || "splitting");
+  const [br2, sBR2] = useState(init?.b2 || 0);
   const [math, sMath] = useState(false);
   const [src, sSrc] = useState(false);
   const [ss, sSS] = useState(false);
@@ -345,15 +389,15 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
   const [kinder, setKinder] = useState(init?.kd || 0);
   const [alleinerziehend, setAlleinerziehend] = useState(init?.ae || false);
 
-  const setV = useCallback(v => { setVeranlagung(v); if (v === "zusammen") setAlleinerziehend(false); }, []);
+  const setV = useCallback(v => { setVeranlagung(v); if (v === "zusammen") setAlleinerziehend(false); if (v === "einzel") { setSplitMode("splitting"); sBR2(0); } }, []);
   const setK = useCallback(n => { setKinder(n); if (n === 0) setAlleinerziehend(false); }, []);
 
   // ─── Preset Apply ───
   const aPre = useCallback(k => {
-    setPre(k); const o = PRE[k]?.o || {};
+    setPre(k); const p = PRE[k] || {}; const o = p.o || {};
     sGF(o.grundfreibetrag ?? B26.grundfreibetrag); sZ2(o.zone2End ?? B26.zone2End);
     sZ3(o.zone3End ?? B26.zone3End); sSP(o.spitzensteuersatz ?? B26.spitzensteuersatz);
-    sRS(o.reichensteuersatz ?? B26.reichensteuersatz); sZ4(o.zone4End ?? B26.zone4End); sER(o.eingangssteuersatz ?? .14); sNS(false);
+    sRS(o.reichensteuersatz ?? B26.reichensteuersatz); sZ4(o.zone4End ?? B26.zone4End); sER(o.eingangssteuersatz ?? .14); sNS(p.ns || false); setSplitMode(p.sm || "splitting");
   }, []);
 
   // ─── Taxpayer Presets (set brutto + family) ───
@@ -363,7 +407,8 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
     if (opts?.kd !== undefined) setKinder(opts.kd);
     if (opts?.ae !== undefined) setAlleinerziehend(opts.ae);
     setErwerbsart(opts?.ea ?? "a");
-    if (opts?.v === "zusammen") setAlleinerziehend(false);
+    if (opts?.v === "zusammen") { setAlleinerziehend(false); sBR2(opts?.b2 ?? 0); }
+    if (opts?.v === "einzel") { setSplitMode("splitting"); sBR2(0); }
   }, []);
 
   // ─── Derived ───
@@ -372,25 +417,47 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
   const zusammen = veranlagung === "zusammen";
 
   const r = useMemo(() => {
-    const sv = isSelbst
+    // Bei Zusammenveranlagung: br = Gesamt, br1 = Person A, br2 = Person B
+    const br1 = zusammen ? br - br2 : br;
+    const sv1 = isSelbst
       ? { tot: 0, abz: 36, kv: 0, rv: 0, av: 0, pv: 0 }
-      : svCalc(br, kinder);
-    const zveRaw = Math.max(0, Math.floor(br - sv.abz));
+      : svCalc(br1, kinder);
+    const zveRaw = Math.max(0, Math.floor(br1 - sv1.abz));
     const entlastung = alleinerziehend && kinder > 0 && !zusammen
       ? ALLEINERZ_BASIS + ALLEINERZ_ZUSCHLAG * Math.max(0, kinder - 1) : 0;
     const zv = Math.max(0, zveRaw - entlastung);
 
-    const fcB = familyCalc(zv, kinder, bp, zusammen);
-    const fcS = familyCalc(zv, kinder, sp2, zusammen);
+    // Partner (nur bei Zusammenveranlagung)
+    const sv2 = zusammen && br2 > 0 ? (isSelbst ? { tot: 0, abz: 36 } : svCalc(br2, 0)) : { tot: 0, abz: 0 };
+    const zv2 = zusammen ? Math.max(0, Math.floor(br2 - sv2.abz)) : 0;
+    const zvGes = zv + zv2;
+
+    const keinSplitting = splitMode !== "splitting";
+    const fcB = familyCalc(zvGes, kinder, bp, zusammen);
+    let fcS;
+    if (zusammen && splitMode === "abschaffen") {
+      // Ersatzlos: Gesamteinkommen wie 1 Person, nur 1 GFB
+      fcS = familyCalc(zvGes, kinder, sp2, false);
+    } else if (zusammen && splitMode === "individuell") {
+      // Individualbesteuerung: jeder Ehepartner separat, je eigener GFB
+      const fc1 = familyCalc(zv, kinder, sp2, false);
+      const fc2 = familyCalc(zv2, 0, sp2, false);
+      fcS = { est: fc1.est + fc2.est, estForSoli: fc1.estForSoli + fc2.estForSoli, kindergeld: fc1.kindergeld, freibetragWins: fc1.freibetragWins };
+    } else {
+      fcS = familyCalc(zvGes, kinder, sp2, zusammen);
+    }
+    // Splittingvorteil: Grundtarif beider Einzeleinkommen vs. Splittingtarif
+    const splitVorteilB = zusammen ? est(zv, bp) + est(zv2, bp) - 2 * est(Math.floor(zvGes / 2), bp) : 0;
+    const splitVorteilS = zusammen && !keinSplitting ? est(zv, sp2) + est(zv2, sp2) - 2 * est(Math.floor(zvGes / 2), sp2) : 0;
     const sB = soli(fcB.estForSoli), sS = ns ? 0 : soli(fcS.estForSoli);
     const kB = kist > 0 ? fcB.estForSoli * kist / 100 : 0;
     const kS = kist > 0 ? fcS.estForSoli * kist / 100 : 0;
 
-    const nB = br - sv.tot - fcB.est + fcB.kindergeld - sB - kB;
-    const nS = br - sv.tot - fcS.est + fcS.kindergeld - sS - kS;
+    const nB = br - sv1.tot - sv2.tot - fcB.est + fcB.kindergeld - sB - kB;
+    const nS = br - sv1.tot - sv2.tot - fcS.est + fcS.kindergeld - sS - kS;
 
     return {
-      zv, zveRaw, entlastung, sv,
+      zv, zv2, zvGes, zveRaw, entlastung, sv: sv1, sv2, br1,
       eB: fcB.est, eS: fcS.est, sB, sS, kB, kS,
       kgB: fcB.kindergeld, kgS: fcS.kindergeld,
       fbWinsB: fcB.freibetragWins, fbWinsS: fcS.freibetragWins,
@@ -398,11 +465,12 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
       nB, nS,
       aB: br > 0 ? (fcB.est + sB + kB - fcB.kindergeld) / br : 0,
       aS: br > 0 ? (fcS.est + sS + kS - fcS.kindergeld) / br : 0,
+      svB: splitVorteilB, svS: splitVorteilS,
     };
-  }, [br, kinder, alleinerziehend, zusammen, kist, bp, sp2, ns, isSelbst]);
+  }, [br, br2, kinder, alleinerziehend, zusammen, kist, bp, sp2, ns, splitMode, isSelbst]);
 
   const nd = r.nS - r.nB;
-  const fi = useMemo(() => fiscal(bp, sp2, ns), [bp, sp2, ns]);
+  const fi = useMemo(() => fiscal(bp, sp2, ns, splitMode), [bp, sp2, ns, splitMode]);
   const deciles = useMemo(() => calcDeciles(fi.bk), [fi]);
 
   const tarifWarning = useMemo(() => {
@@ -413,19 +481,19 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
 
   // ─── Sharing ───
   const share = useCallback(() => {
-    const qs = encSt({ b: br, pr: pre, gf, z2, z3, sp, rs, z4, er, ns, ki: kist, v: veranlagung, kd: kinder, ae: alleinerziehend, ea: erwerbsart });
+    const qs = encSt({ b: br, pr: pre, gf, z2, z3, sp, rs, z4, er, ns, sm: splitMode, b2: br2, ki: kist, v: veranlagung, kd: kinder, ae: alleinerziehend, ea: erwerbsart });
     const base = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "";
     const url = qs ? `${base}?${qs}` : base;
     sSurl(url);
     navigator?.clipboard?.writeText(url).then(() => { sCop(true); setTimeout(() => sCop(false), 2500); });
     return url;
-  }, [br, pre, gf, z2, z3, sp, rs, z4, er, ns, kist, veranlagung, kinder, alleinerziehend, erwerbsart]);
+  }, [br, pre, gf, z2, z3, sp, rs, z4, er, ns, splitMode, br2, kist, veranlagung, kinder, alleinerziehend, erwerbsart]);
 
   const scenarioUrl = useMemo(() => {
-    const qs = encSt({ b: 75000, pr: pre, gf, z2, z3, sp, rs, z4, er, ns, ki: 0, v: "einzel", kd: 0, ae: false, ea: "a" });
+    const qs = encSt({ b: 75000, pr: pre, gf, z2, z3, sp, rs, z4, er, ns, sm: splitMode, ki: 0, v: "einzel", kd: 0, ae: false, ea: "a" });
     const base = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "";
     return qs ? `${base}?${qs}` : base;
-  }, [pre, gf, z2, z3, sp, rs, z4, er, ns]);
+  }, [pre, gf, z2, z3, sp, rs, z4, er, ns, splitMode]);
 
   const composeTweet = useCallback(() => {
     const fiAbs = Math.abs(fi.t);
@@ -542,7 +610,7 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
             Berechnung nach Grundtarif (Einzelveranlagung) oder Splittingtarif (§32a Abs. 5). Kinderfreibetrag (§32 Abs. 6) mit Günstigerprüfung (§31) gegen Kindergeld (259€/Monat).
             Entlastungsbetrag Alleinerziehende (§24b). PV-Staffelung nach Kinderzahl (PUEG 2023).
             Fiskalschätzung: Statische Simulation ohne Verhaltensanpassung (static scoring).
-            Grundtarif (kein Splitting), ohne Kindergeld/KFB. Keine Unterscheidung nach Erwerbsart.
+            {splitMode !== "splitting" ? "Splitting-Effekt modelliert (~31% der Steuerpflichtigen, Alleinverdiener-Annahme — konservative Schätzung)." : "Grundtarif (kein Splitting)."}{" "}Ohne Kindergeld/KFB. Keine Unterscheidung nach Erwerbsart.
             Einkommensverteilung Destatis 2021 (~5 Jahre alt). Grobe Größenordnung, keine Prognose.
             Szenario-Koeffizienten automatisch aus Zonengrenzen abgeleitet (Stetigkeit gesichert). <b style={{ color: C.red }}>Keine Gewähr.</b>
           </div>
@@ -556,7 +624,7 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
             {/* ─── EINGABEN ─── */}
             <div style={cd}>
               <h3 style={st}>Eingaben</h3>
-              <Sl label={isSelbst ? "Gewinn / Einkünfte (vor Steuern)" : "Brutto-Jahresgehalt"} value={br} onChange={setBr} min={10000} max={500000} step={1000} inputMax={100000000} format={v => v >= 1e6 ? `${(v/1e6).toFixed(1).replace(".",",")} Mio. €` : `${f(v)} €`} />
+              <Sl label={zusammen ? "Gesamt-Brutto Haushalt" : isSelbst ? "Gewinn / Einkünfte (vor Steuern)" : "Brutto-Jahresgehalt"} value={br} onChange={v => { setBr(v); if (br2 > v) sBR2(v); }} min={10000} max={500000} step={1000} inputMax={100000000} format={v => v >= 1e6 ? `${(v/1e6).toFixed(1).replace(".",",")} Mio. €` : `${f(v)} €`} />
 
               {/* Erwerbsart */}
               <div style={{ marginBottom: 10 }}>
@@ -587,8 +655,13 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                       color: veranlagung === v.k ? C.orange : C.text,
                     }}>{v.l}</button>)}
                 </div>
-                {zusammen && <div style={{ fontSize: 8, color: C.light, marginTop: 3 }}>Alleinverdiener-Modell: zvE/2 → Tarif → ×2</div>}
               </div>
+              {zusammen && <div style={{ marginBottom: 10 }}>
+                <Sl label="davon Partner" value={br2} onChange={sBR2} min={0} max={br} step={1000} inputMax={br} format={v => v === 0 ? "0 € (Alleinverdiener)" : `${f(v)} €  (${Math.round(v / br * 100)}%)`} />
+                <div style={{ fontSize: 8, color: C.light, marginTop: 2 }}>
+                  {br2 === 0 ? "Alleinverdiener-Modell (maximaler Splittingvorteil)" : `Person A: ${f(br - br2)} € · Person B: ${f(br2)} €`}
+                </div>
+              </div>}
 
               {/* Kinder */}
               <div style={{ marginBottom: 10 }}>
@@ -618,36 +691,27 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
 
               {/* Schnellauswahl */}
               <div style={{ fontSize: 9, color: C.light, marginBottom: 4 }}>Schnellauswahl:</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 4 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 10 }}>
                 {[
-                  { l: "Mindestlohn", v: 28912, d: "13,90€/h Vollzeit" },
-                  { l: "Median", v: 52000, d: "Stepstone 2025" },
-                  { l: "Gutverdiener", v: 85000, d: "Obere ~15%" },
-                  { l: "Top 5%", v: 130000, d: "~130k zvE" },
-                  { l: "CEO / GF", v: 500000, d: "Geschäftsführer" },
-                ].map(p => <button key={p.v} onClick={() => applyTaxpayer(p.v, {})} style={{
-                  background: br === p.v ? C.tag : C.card, border: `1px solid ${br === p.v ? C.orange : C.border}`,
-                  borderRadius: 4, padding: "5px 4px", cursor: "pointer", textAlign: "center", fontFamily: FF,
-                }}>
-                  <div style={{ fontSize: 9, fontWeight: 600, color: br === p.v ? C.orange : C.text }}>{p.l}</div>
-                  <div style={{ fontSize: 7, color: C.light, marginTop: 1 }}>{p.d}</div>
-                </button>)}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginBottom: 10 }}>
-                {[
+                  { l: "Mindestlohn", v: 28912, d: "13,90€/h Vollzeit", opts: {} },
                   { l: "Fachkraft", v: 45000, d: "Ohne Studium", opts: {} },
-                  { l: "Familie 2K", v: 75000, d: "Zusammenveranl.", opts: { v: "zusammen", kd: 2, ae: false } },
-                  { l: "Alleinerz.", v: 35000, d: "1 Kind", opts: { v: "einzel", kd: 1, ae: true } },
+                  { l: "Median", v: 52000, d: "Stepstone 2025", opts: {} },
                   { l: "Freelancer", v: 65000, d: "Selbständig", opts: { ea: "s", v: "einzel", kd: 0, ae: false } },
+                  { l: "Familie 2K", v: 75000, d: "Zusammen, 60/40", opts: { v: "zusammen", kd: 2, ae: false, b2: 30000 } },
+                  { l: "Ehepaar", v: 85000, d: "45k / 40k", opts: { v: "zusammen", kd: 0, ae: false, b2: 40000 } },
+                  { l: "Gutverdiener", v: 85000, d: "Obere ~15%", opts: {} },
+                  { l: "Top 5%", v: 130000, d: "~130k zvE", opts: {} },
+                  { l: "Alleinerz.", v: 35000, d: "1 Kind", opts: { v: "einzel", kd: 1, ae: true } },
                 ].map(p => {
-                  const active = br === p.v && (p.opts.ea ?? "a") === erwerbsart;
+                  const active = br === p.v && (p.opts.ea ?? "a") === erwerbsart && (p.opts.v ?? veranlagung) === veranlagung && (p.opts.kd ?? kinder) === kinder;
                   return <button key={p.l} onClick={() => applyTaxpayer(p.v, p.opts)} style={{
-                  background: active ? C.tag : C.card, border: `1px solid ${active ? C.orange : C.border}`,
-                  borderRadius: 4, padding: "5px 4px", cursor: "pointer", textAlign: "center", fontFamily: FF,
-                }}>
-                  <div style={{ fontSize: 9, fontWeight: 600, color: active ? C.orange : C.text }}>{p.l}</div>
-                  <div style={{ fontSize: 7, color: C.light, marginTop: 1 }}>{p.d}</div>
-                </button>;})}
+                    background: active ? C.tag : C.card, border: `1px solid ${active ? C.orange : C.border}`,
+                    borderRadius: 4, padding: "5px 4px", cursor: "pointer", textAlign: "center", fontFamily: FF,
+                  }}>
+                    <div style={{ fontSize: 9, fontWeight: 600, color: active ? C.orange : C.text }}>{p.l}</div>
+                    <div style={{ fontSize: 7, color: C.light, marginTop: 1 }}>{p.d}</div>
+                  </button>;
+                })}
               </div>
 
               <div style={{ display: "flex", gap: 14, marginBottom: 8, fontSize: 11, flexWrap: "wrap" }}>
@@ -656,21 +720,24 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
 
               {/* zvE Summary */}
               <div style={{ background: C.tag, borderRadius: 4, padding: 8, fontSize: 10, color: C.sub, lineHeight: 1.6, fontFamily: FM }}>
-                {f(br)} € → −{f(r.sv.abz)} € {isSelbst ? "SA-PB" : "Vorsorge"}
+                {zusammen ? f(r.br1) : f(br)} € → −{f(r.sv.abz)} € {isSelbst ? "SA-PB" : "Vorsorge"}
                 {r.entlastung > 0 && <> → −{f(r.entlastung)} € §24b</>}
                 {" → "}<b style={{ color: C.text }}>zvE {f(r.zv)} €</b>
-                {zusammen && <><br/>Splitting: 2 × est({f(Math.floor(r.zv / 2))})</>}
+                {zusammen && br2 > 0 && <><br/>Partner: {f(br2)} € → −{f(r.sv2.abz)} € → zvE {f(r.zv2)} €</>}
+                {zusammen && <><br/>Splitting: 2 × est({f(Math.floor(r.zvGes / 2))}){br2 > 0 ? ` (zvE gesamt: ${f(r.zvGes)} €)` : ""}</>}
                 {kinder > 0 && <><br/>{r.fbWinsB ? "Freibetrag günstiger (SQ)" : `Kindergeld günstiger: ${f(r.kgB)} €/Jahr (SQ)`}</>}
               </div>
 
               <div style={{ background: "#fef9ef", border: "1px solid #e8dcc8", borderRadius: 4, padding: 8, fontSize: 8, color: C.sub, lineHeight: 1.5, marginTop: 8 }}>
                 {zusammen
-                  ? "⚠ Zusammenveranlagung (§32a Abs. 5): Alleinverdiener-Modell. Einkommen des Partners wird als 0€ angenommen (maximaler Splitting-Vorteil)."
+                  ? br2 === 0
+                    ? "⚠ Zusammenveranlagung (§32a Abs. 5): Alleinverdiener-Modell (maximaler Splitting-Vorteil). Anteil Partner oben anpassen."
+                    : `⚠ Zusammenveranlagung (§32a Abs. 5): Splitting auf Gesamteinkommen ${f(br)} €. Person A: ${f(br - br2)} €, Person B: ${f(br2)} €. SV separat berechnet.`
                   : "⚠ Einzelveranlagung (§32a Abs. 1 Grundtarif)."
                 }
                 {isSelbst && " Selbständig: Eingabe = Gewinn nach Betriebsausgaben. Keine SV, kein WK-Pauschbetrag — nur SA-Pauschbetrag (36€)."}
                 {kinder > 0 && " Kinderfreibetrag mit Günstigerprüfung (§31). Soli/KiSt immer auf Basis Freibetrag (§32 Abs. 6)."}
-                {" "}Fiskalschätzung ohne Splitting/Kindergeld.
+                {" "}{splitMode !== "splitting" ? `Fiskalschätzung inkl. Splitting-Effekt (~31% Splittingtarif, Alleinverdiener-Annahme). Modus: ${splitMode === "abschaffen" ? "ersatzlos (1 GFB)" : "Individualbesteuerung (je eigener GFB)"}.` : "Fiskalschätzung ohne Splitting/Kindergeld."}
               </div>
             </div>
 
@@ -697,6 +764,21 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
               <Sl label="Reichensteuer ab" value={z4} onChange={v => { sZ4(v); setPre("c"); }} min={100000} max={500000} step={5000} format={v => `${f(v)} €`} />
               <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11, color: C.sub }}><input type="checkbox" checked={ns} onChange={e => { sNS(e.target.checked); setPre("c"); }} style={{ accentColor: C.orange }} /> Soli abschaffen</label>
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 9, color: C.light, marginBottom: 4 }}>Ehegattensplitting:</div>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {[{ k: "splitting", l: "Splitting" }, { k: "abschaffen", l: "Abschaffen" }, { k: "individuell", l: "Individuell" }].map(v =>
+                      <button key={v.k} onClick={() => { setSplitMode(v.k); setPre("c"); }} style={{
+                        flex: 1, background: splitMode === v.k ? C.tag : C.card,
+                        border: `1px solid ${splitMode === v.k ? C.orange : C.border}`,
+                        borderRadius: 4, padding: "6px 4px", cursor: "pointer", fontFamily: FF,
+                        fontSize: 9, fontWeight: splitMode === v.k ? 600 : 400,
+                        color: splitMode === v.k ? C.orange : C.text,
+                      }}>{v.l}</button>)}
+                  </div>
+                  {splitMode === "abschaffen" && <div style={{ fontSize: 8, color: C.red, marginTop: 3 }}>Gesamteinkommen → 1 GFB (unrealistisch hart)</div>}
+                  {splitMode === "individuell" && <div style={{ fontSize: 8, color: C.orange, marginTop: 3 }}>Jeder behält eigenen GFB (realistischer Reformvorschlag)</div>}
+                </div>
               </div>
             </div>
           </div>}
@@ -704,8 +786,8 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
           {/* ═══════════ RIGHT COLUMN: RESULTS ═══════════ */}
           <div>
             {ss && <div style={{ background: C.tag, borderRadius: 4, padding: "6px 10px", marginBottom: 10, fontSize: 10, color: C.sub, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 4 }}>
-              <span>{isSelbst ? "Gewinn" : "Brutto"} <b style={{ color: C.text }}>{f(br)} €</b> · zvE <b style={{ color: C.text }}>{f(r.zv)} €</b>{familyStr}{isSelbst ? " · Selbständig" : ""}</span>
-              <span><b style={{ color: C.orange }}>{PRE[pre]?.l || "Custom"}</b>{ns ? " · kein Soli" : ""}</span>
+              <span>{zusammen ? "Gesamt" : isSelbst ? "Gewinn" : "Brutto"} <b style={{ color: C.text }}>{f(br)} €</b>{zusammen && br2 > 0 ? ` (${Math.round(br2 / br * 100)}% Partner)` : ""} · zvE <b style={{ color: C.text }}>{f(zusammen ? r.zvGes : r.zv)} €</b>{familyStr}{isSelbst ? " · Selbständig" : ""}</span>
+              <span><b style={{ color: C.orange }}>{PRE[pre]?.l || "Custom"}</b>{ns ? " · kein Soli" : ""}{splitMode === "abschaffen" ? " · Splitting weg" : splitMode === "individuell" ? " · Individualbesteuerung" : ""}</span>
             </div>}
 
             {banner && <div style={{ background: "#eef6ff", border: `1px solid #b8d4f0`, borderRadius: 6, padding: "10px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -721,6 +803,33 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
               <div style={{ fontSize: 10, color: C.sub, marginTop: 2 }}>{tarifWarning}</div>
             </div>}
 
+            {splitMode !== "splitting" && <div style={{ background: "#fef9ef", border: "1px solid #e8dcc8", borderRadius: 6, padding: "12px 16px", marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+                {splitMode === "abschaffen" ? "Splitting ersatzlos abschaffen" : "Individualbesteuerung"}
+              </div>
+              {splitMode === "abschaffen" ? <>
+                <div style={{ fontSize: 10, color: C.sub, lineHeight: 1.6 }}>
+                  <b>Persönlich:</b> Das Gesamteinkommen wird wie bei einer Einzelperson besteuert — nur <b>ein Grundfreibetrag</b> ({f(gf)} €) statt zwei. Maximale Mehrbelastung für Ehepaare.
+                </div>
+                <div style={{ fontSize: 10, color: C.sub, lineHeight: 1.6, marginTop: 4 }}>
+                  <b>Fiskal:</b> SQ modelliert ~31% Splittingtarif-Nutzer (Alleinverdiener-Annahme). Szenario: Gesamteinkommen → 1 GFB. Obere Schätzung — so nicht realistisch umsetzbar.
+                </div>
+              </> : <>
+                <div style={{ fontSize: 10, color: C.sub, lineHeight: 1.6 }}>
+                  <b>Persönlich:</b> Jeder Ehepartner wird separat besteuert — beide behalten ihren <b>eigenen Grundfreibetrag</b> ({f(gf)} €). Der Netto-Unterschied zu Splitting hängt von der Einkommensverteilung ab: je ungleicher, desto größer der Effekt.
+                </div>
+                <div style={{ fontSize: 10, color: C.sub, lineHeight: 1.6, marginTop: 4 }}>
+                  <b>Fiskal:</b> SQ modelliert ~31% Splittingtarif-Nutzer (Alleinverdiener-Annahme). Szenario: gewichtete Einkommensaufteilung (22% Alleinverdiener, 39% ~70/30, 36% ~50/50). DIW (2020): ~25,6 Mrd. € Splitting-Effekt p.a.
+                </div>
+              </>}
+              {zusammen && br2 === 0 && <div style={{ fontSize: 10, color: C.orange, marginTop: 8, fontWeight: 600 }}>
+                Hinweis: Bei Alleinverdiener (Partner = 0 €) ist die persönliche Steuer bei „Abschaffen" und „Individuell" identisch — der Unterschied zeigt sich erst bei zwei Einkommen. Partner-Anteil oben anpassen.
+              </div>}
+              {!zusammen && <div style={{ fontSize: 10, color: C.orange, marginTop: 8, fontWeight: 600 }}>
+                Hinweis: Du bist in Einzelveranlagung — die Splitting-Reform betrifft deine persönliche Steuer nicht, nur die Fiskalschätzung. Für den persönlichen Effekt auf „Zusammenveranlagung" wechseln.
+              </div>}
+            </div>}
+
             {/* HERO */}
             <div style={{ background: nd > 0 ? "#f0f9f2" : nd < 0 ? "#fef2f2" : C.tag, border: `1px solid ${nd > 0 ? "#bbdfc4" : nd < 0 ? "#f5c6c6" : C.border}`, borderRadius: 6, padding: 20, marginBottom: 14, textAlign: "center" }}>
               <div style={{ fontSize: 10, color: C.light, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 4 }}>Netto-Differenz pro Jahr{familyStr}</div>
@@ -730,6 +839,24 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                 🐦 Dieses Ergebnis auf Twitter teilen
               </button>
             </div>
+
+            {zusammen && r.svB > 0 && <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "12px 16px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: C.text }}>Splittingvorteil</div>
+                <div style={{ fontSize: 9, color: C.light, marginTop: 2 }}>Ersparnis ggü. Grundtarif{br2 === 0 ? " · Alleinverdiener-Modell" : ` · ${f(br - br2)}/${f(br2)} €`}</div>
+              </div>
+              <div style={{ display: "flex", gap: 16 }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 8, color: C.blue, textTransform: "uppercase", letterSpacing: ".06em" }}>Status Quo</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.green, fontFamily: FM }}>{f(r.svB)} €</div>
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 8, color: C.orange, textTransform: "uppercase", letterSpacing: ".06em" }}>Szenario</div>
+                  {splitMode !== "splitting" ? <div style={{ fontSize: 11, fontWeight: 600, color: C.red, fontFamily: FM }}>{splitMode === "abschaffen" ? "abgeschafft" : "Individuell"}</div>
+                    : <div style={{ fontSize: 16, fontWeight: 700, color: C.green, fontFamily: FM }}>{f(r.svS)} €</div>}
+                </div>
+              </div>
+            </div>}
 
             {/* KPIs */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
@@ -783,8 +910,8 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                 <tbody>
                 {(() => {
                   const rows = [
-                    [isSelbst ? "Gewinn" : "Brutto", br, br],
-                    ...(!isSelbst ? [["– Sozialversicherung", r.sv.tot, r.sv.tot]] : []),
+                    [zusammen ? "Brutto Haushalt" : isSelbst ? "Gewinn" : "Brutto", br, br],
+                    ...(!isSelbst ? [["– Sozialversicherung", r.sv.tot + r.sv2.tot, r.sv.tot + r.sv2.tot]] : []),
                     [r.fbWinsB || r.fbWinsS ? "– ESt (inkl. KFB)" : "– Einkommensteuer", r.eB, r.eS],
                     ["– Solidaritätszuschlag", r.sB, r.sS],
                   ];
@@ -847,7 +974,7 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                   </div>;
                 })}
               </div>
-              <div style={{ fontSize: 8, color: C.light, marginTop: 6 }}>Statische Simulation (kein Verhaltenseffekt). Grundtarif für alle Steuerpflichtigen — kein Splitting (~35% nutzen Splittingtarif), kein Kindergeld/KFB (~10 Mio. Steuerpflichtige mit Kindern). Einkommensverteilung: Destatis LuESt 2021 (≈42,5 Mio., nicht inflationsbereinigt auf 2026). Grobe Schätzung — tatsächliche Aufkommenswirkung kann ±10–20% abweichen.</div>
+              <div style={{ fontSize: 8, color: C.light, marginTop: 6 }}>Statische Simulation (kein Verhaltenseffekt). {splitMode !== "splitting" ? `Splitting-Effekt: ~31% der Steuerfälle nutzen Splittingtarif (Destatis LuESt 2021). SQ: Alleinverdiener-Annahme. ${splitMode === "individuell" ? "Szenario: Individualbesteuerung mit gewichteter Einkommensaufteilung (22% Alleinverdiener, 39% StKl III/V ~70/30, 36% IV/IV ~52/48, Destatis/Mikrozensus)." : "Szenario: ersatzlose Streichung (1 GFB)."} DIW (2020) schätzt ~25,6 Mrd. € Mindereinnahmen p.a.` : "Grundtarif für alle Steuerpflichtigen — kein Splitting (~31% nutzen Splittingtarif)."} Kein Kindergeld/KFB (~10 Mio. Steuerpflichtige mit Kindern). Einkommensverteilung: Destatis LuESt 2021 (≈42,5 Mio., nicht inflationsbereinigt auf 2026). Grobe Schätzung — tatsächliche Aufkommenswirkung kann ±10–20% abweichen.</div>
             </div>
 
             {/* CTA */}

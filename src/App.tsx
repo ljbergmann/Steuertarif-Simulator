@@ -376,9 +376,9 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
   const [surl, sSurl] = useState("");
   const [banner, sBanner] = useState(fromLink);
   const [showChangelog, setShowChangelog] = useState(() => {
-    try { return localStorage.getItem("32a-changelog-v2") !== "1"; } catch { return true; }
+    try { return localStorage.getItem("32a-changelog-v3") !== "1"; } catch { return true; }
   });
-  const dismissChangelog = () => { setShowChangelog(false); try { localStorage.setItem("32a-changelog-v2", "1"); } catch {} };
+  const dismissChangelog = () => { setShowChangelog(false); try { localStorage.setItem("32a-changelog-v3", "1"); } catch {} };
 
   // ─── Erwerbsart ───
   const [erwerbsart, setErwerbsart] = useState(init?.ea || "a");
@@ -547,7 +547,7 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
         {/* HEADER */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${C.text}`, paddingBottom: 10, marginBottom: ss ? 10 : 20, flexWrap: "wrap", gap: 8 }}>
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-.02em" }}>Steuertarif-Simulator <span style={{ fontWeight: 400, color: C.light, fontSize: 13 }}>§32a EStG · VZ 2026</span> <span style={{ fontSize: 9, color: C.border, fontWeight: 400, verticalAlign: "middle" }}>v2.0</span></h1>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-.02em" }}>Steuertarif-Simulator <span style={{ fontWeight: 400, color: C.light, fontSize: 13 }}>§32a EStG · VZ 2026</span> <span style={{ fontSize: 9, color: C.border, fontWeight: 400, verticalAlign: "middle" }}>v3.0</span></h1>
             {!ss && <p style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>Tarifänderungen modellieren · Netto-Impact & Fiskalwirkung berechnen · inkl. Splitting & Kindergeld</p>}
           </div>
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
@@ -568,14 +568,14 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
         {/* CHANGELOG */}
         {showChangelog && <div style={{ background: "#f0f7ff", border: `1px solid ${C.blue}30`, borderRadius: 6, padding: "12px 16px", marginBottom: 14, position: "relative" }}>
           <button onClick={dismissChangelog} style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: C.light, fontSize: 14, fontFamily: FF }}>✕</button>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, marginBottom: 6 }}>Neu in v2.0</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, marginBottom: 6 }}>Neu in v3.0</div>
           <ul style={{ fontSize: 10, color: C.sub, lineHeight: 1.7, margin: 0, paddingLeft: 16 }}>
-            <li>Zusammenveranlagung / Splittingtarif (§32a Abs. 5)</li>
-            <li>Kinderfreibetrag & Kindergeld mit Günstigerprüfung (§31/§32)</li>
-            <li>Entlastungsbetrag Alleinerziehende (§24b)</li>
-            <li>Modus „Selbständig" (keine SV, nur SA-Pauschbetrag)</li>
-            <li>Eingangssteuersatz als Slider</li>
-            <li>Erweiterte Fiskal-Disclaimers</li>
+            <li>Splitting-Reform: 3 Modi — Splitting / Abschaffen (1 GFB) / Individualbesteuerung (je eigener GFB)</li>
+            <li>Partnereinkommen — Gesamt-Brutto mit Aufteilung auf beide Ehepartner</li>
+            <li>Splittingvorteil-Anzeige mit realer Einkommensverteilung</li>
+            <li>Fiskalschätzung mit gewichteten Paar-Typen (Alleinverdiener, StKl III/V, IV/IV)</li>
+            <li>Klingbeil-Preset (Mittelstandsbauch weg, kein Soli, 49%, Individualbesteuerung)</li>
+            <li>WCAG AA Farbkontrast</li>
           </ul>
         </div>}
 

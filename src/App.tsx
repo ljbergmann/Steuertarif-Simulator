@@ -720,11 +720,12 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
 
               {/* zvE Summary */}
               <div style={{ background: C.tag, borderRadius: 4, padding: 8, fontSize: 10, color: C.sub, lineHeight: 1.6, fontFamily: FM }}>
-                {zusammen ? f(r.br1) : f(br)} € → −{f(r.sv.abz)} € {isSelbst ? "SA-PB" : "Vorsorge"}
+                {zusammen && br2 > 0 ? "Person A: " : ""}{zusammen ? f(r.br1) : f(br)} € → −{f(r.sv.abz)} € {isSelbst ? "SA-PB" : "Vorsorge"}
                 {r.entlastung > 0 && <> → −{f(r.entlastung)} € §24b</>}
                 {" → "}<b style={{ color: C.text }}>zvE {f(r.zv)} €</b>
-                {zusammen && br2 > 0 && <><br/>Partner: {f(br2)} € → −{f(r.sv2.abz)} € → zvE {f(r.zv2)} €</>}
-                {zusammen && <><br/>Splitting: 2 × est({f(Math.floor(r.zvGes / 2))}){br2 > 0 ? ` (zvE gesamt: ${f(r.zvGes)} €)` : ""}</>}
+                {zusammen && br2 > 0 && <><br/>Person B: {f(br2)} € → −{f(r.sv2.abz)} € {isSelbst ? "SA-PB" : "Vorsorge"} → <b style={{ color: C.text }}>zvE {f(r.zv2)} €</b></>}
+                {zusammen && br2 > 0 && <><br/>Gesamt: <b style={{ color: C.text }}>zvE {f(r.zvGes)} €</b> · SV {f(r.sv.tot + r.sv2.tot)} €</>}
+                {zusammen && <><br/>Splitting: 2 × est({f(Math.floor(r.zvGes / 2))})</>}
                 {kinder > 0 && <><br/>{r.fbWinsB ? "Freibetrag günstiger (SQ)" : `Kindergeld günstiger: ${f(r.kgB)} €/Jahr (SQ)`}</>}
               </div>
 

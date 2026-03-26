@@ -2,5 +2,6 @@ node_modules
 dist
 .idea
 *.local
+deploy.sh
 index.html
 src/main-embed.tsx

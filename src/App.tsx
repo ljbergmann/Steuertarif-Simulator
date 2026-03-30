@@ -92,16 +92,16 @@ function familyCalc(zvE, kinder, params, zusammen) {
     ? (z) => 2 * est(Math.floor(z / 2), params)
     : (z) => est(z, params);
   const estBase = calcEst(zvE);
-  if (kinder === 0) return { est: estBase, estForSoli: estBase, kindergeld: 0, freibetragWins: false };
+  if (kinder === 0) return { est: estBase, estRaw: estBase, estForSoli: estBase, kindergeld: 0, freibetragWins: false };
   const fb = zusammen ? KFB_VOLL : KFB_HALB;
   const zveFB = Math.max(0, zvE - fb * kinder);
   const estWithFB = calcEst(zveFB);
   const ersparnis = estBase - estWithFB;
   const kg = KG_JAHR * kinder;
   if (ersparnis > kg) {
-    return { est: estWithFB, estForSoli: estWithFB, kindergeld: 0, freibetragWins: true };
+    return { est: estWithFB, estRaw: estBase, estForSoli: estWithFB, kindergeld: 0, freibetragWins: true };
   }
-  return { est: estBase, estForSoli: estWithFB, kindergeld: kg, freibetragWins: false };
+  return { est: estBase, estRaw: estBase, estForSoli: estWithFB, kindergeld: kg, freibetragWins: false };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -162,7 +162,7 @@ function fiscal(bp, sp, ns, splitMode) {
       sS_ = ns ? 0 : soli(eS_grund);
     }
     de += (eS - eB) * n; ds += (sS_ - sB_) * n;
-    bk.push({ z, n, dp: (eS + sS_) - (eB + sB_), tB: (eB + sB_) * n, tS: (eS + sS_) * n });
+    bk.push({ z, n, dp: (eS + sS_) - (eB + sB_), tB: (eB + sB_) * n, tS: (eS + sS_) * n, estB: eB * n, estS: eS * n, solB: sB_ * n, solS: sS_ * n });
   }
   return { t: de + ds, de, ds, bk };
 }
@@ -171,27 +171,34 @@ function calcDeciles(bk) {
   const sorted = [...bk].sort((a, b) => a.z - b.z);
   const totalN = sorted.reduce((s, b) => s + b.n, 0);
   const decileSize = totalN / 10;
-  const dec = Array.from({length: 10}, () => ({ tB: 0, tS: 0, n: 0, zMin: Infinity, zMax: 0 }));
+  const dec = Array.from({length: 10}, () => ({ tB: 0, tS: 0, estB: 0, estS: 0, solB: 0, solS: 0, n: 0, zMin: Infinity, zMax: 0 }));
   let consumed = 0;
   for (const b of sorted) {
     if (b.n === 0) continue;
-    const taxPerPersonB = b.n > 0 ? b.tB / b.n : 0;
-    const taxPerPersonS = b.n > 0 ? b.tS / b.n : 0;
+    const ppB = b.n > 0 ? b.tB / b.n : 0, ppS = b.n > 0 ? b.tS / b.n : 0;
+    const ppEstB = b.n > 0 ? b.estB / b.n : 0, ppEstS = b.n > 0 ? b.estS / b.n : 0;
+    const ppSolB = b.n > 0 ? b.solB / b.n : 0, ppSolS = b.n > 0 ? b.solS / b.n : 0;
     let remaining = b.n;
     while (remaining > 0.5) {
       const di = Math.min(Math.floor(consumed / decileSize), 9);
       const spaceInDecile = (di + 1) * decileSize - consumed;
       const take = Math.min(remaining, spaceInDecile);
-      dec[di].tB += taxPerPersonB * take; dec[di].tS += taxPerPersonS * take;
+      dec[di].tB += ppB * take; dec[di].tS += ppS * take;
+      dec[di].estB += ppEstB * take; dec[di].estS += ppEstS * take;
+      dec[di].solB += ppSolB * take; dec[di].solS += ppSolS * take;
       dec[di].n += take; dec[di].zMin = Math.min(dec[di].zMin, b.z); dec[di].zMax = Math.max(dec[di].zMax, b.z);
       consumed += take; remaining -= take;
     }
   }
   const totB = dec.reduce((s, d) => s + d.tB, 0), totS = dec.reduce((s, d) => s + d.tS, 0);
+  const totEstB = dec.reduce((s, d) => s + d.estB, 0), totEstS = dec.reduce((s, d) => s + d.estS, 0);
+  const totSolB = dec.reduce((s, d) => s + d.solB, 0), totSolS = dec.reduce((s, d) => s + d.solS, 0);
   return dec.map((d, i) => ({
-    i: i + 1, n: Math.round(d.n), tB: d.tB, tS: d.tS,
+    i: i + 1, n: Math.round(d.n), tB: d.tB, tS: d.tS, estB: d.estB, estS: d.estS, solB: d.solB, solS: d.solS,
     zMin: d.zMin === Infinity ? 0 : d.zMin, zMax: d.zMax,
     pctB: totB > 0 ? d.tB / totB : 0, pctS: totS > 0 ? d.tS / totS : 0,
+    pctEstB: totEstB > 0 ? d.estB / totEstB : 0, pctEstS: totEstS > 0 ? d.estS / totEstS : 0,
+    pctSolB: totSolB > 0 ? d.solB / totSolB : 0, pctSolS: totSolS > 0 ? d.solS / totSolS : 0,
   }));
 }
 
@@ -376,9 +383,9 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
   const [surl, sSurl] = useState("");
   const [banner, sBanner] = useState(fromLink);
   const [showChangelog, setShowChangelog] = useState(() => {
-    try { return localStorage.getItem("32a-changelog-v3") !== "1"; } catch { return true; }
+    try { return localStorage.getItem("32a-changelog-v31") !== "1"; } catch { return true; }
   });
-  const dismissChangelog = () => { setShowChangelog(false); try { localStorage.setItem("32a-changelog-v3", "1"); } catch {} };
+  const dismissChangelog = () => { setShowChangelog(false); try { localStorage.setItem("32a-changelog-v31", "1"); } catch {} };
 
   // ─── Erwerbsart ───
   const [erwerbsart, setErwerbsart] = useState(init?.ea || "a");
@@ -398,17 +405,19 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
     sGF(o.grundfreibetrag ?? B26.grundfreibetrag); sZ2(o.zone2End ?? B26.zone2End);
     sZ3(o.zone3End ?? B26.zone3End); sSP(o.spitzensteuersatz ?? B26.spitzensteuersatz);
     sRS(o.reichensteuersatz ?? B26.reichensteuersatz); sZ4(o.zone4End ?? B26.zone4End); sER(o.eingangssteuersatz ?? .14); sNS(p.ns || false); setSplitMode(p.sm || "splitting");
+    // Reset personal params to defaults
+    setBr(75000); sBR2(0); setVeranlagung("einzel"); setKinder(0); setAlleinerziehend(false); setErwerbsart("a"); setKist(0);
   }, []);
 
   // ─── Taxpayer Presets (set brutto + family) ───
   const applyTaxpayer = useCallback((v, opts) => {
     setBr(v);
-    if (opts?.v) setVeranlagung(opts.v);
-    if (opts?.kd !== undefined) setKinder(opts.kd);
-    if (opts?.ae !== undefined) setAlleinerziehend(opts.ae);
+    setVeranlagung(opts?.v ?? "einzel");
+    setKinder(opts?.kd ?? 0);
+    setAlleinerziehend(opts?.ae ?? false);
     setErwerbsart(opts?.ea ?? "a");
-    if (opts?.v === "zusammen") { setAlleinerziehend(false); sBR2(opts?.b2 ?? 0); }
-    if (opts?.v === "einzel") { setSplitMode("splitting"); sBR2(0); }
+    sBR2(opts?.b2 ?? 0);
+    if (opts?.v !== "zusammen") setSplitMode("splitting");
   }, []);
 
   // ─── Derived ───
@@ -428,7 +437,7 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
     const zv = Math.max(0, zveRaw - entlastung);
 
     // Partner (nur bei Zusammenveranlagung)
-    const sv2 = zusammen && br2 > 0 ? (isSelbst ? { tot: 0, abz: 36 } : svCalc(br2, 0)) : { tot: 0, abz: 0 };
+    const sv2 = zusammen && br2 > 0 ? (isSelbst ? { tot: 0, abz: 36 } : svCalc(br2, kinder)) : { tot: 0, abz: 0 };
     const zv2 = zusammen ? Math.max(0, Math.floor(br2 - sv2.abz)) : 0;
     const zvGes = zv + zv2;
 
@@ -440,9 +449,20 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
       fcS = familyCalc(zvGes, kinder, sp2, false);
     } else if (zusammen && splitMode === "individuell") {
       // Individualbesteuerung: jeder Ehepartner separat, je eigener GFB
-      const fc1 = familyCalc(zv, kinder, sp2, false);
-      const fc2 = familyCalc(zv2, 0, sp2, false);
-      fcS = { est: fc1.est + fc2.est, estForSoli: fc1.estForSoli + fc2.estForSoli, kindergeld: fc1.kindergeld, freibetragWins: fc1.freibetragWins };
+      // Günstigerprüfung auf Familienebene: beide KFB_HALB vs. gesamtes KG
+      const est1 = est(zv, sp2), est2 = est(zv2, sp2);
+      const est1fb = est(Math.max(0, zv - KFB_HALB * kinder), sp2);
+      const est2fb = est(Math.max(0, zv2 - KFB_HALB * kinder), sp2);
+      const kfbErsparnis = (est1 - est1fb) + (est2 - est2fb);
+      const kg = KG_JAHR * kinder;
+      const fbWins = kinder > 0 && kfbErsparnis > kg;
+      fcS = {
+        est: fbWins ? est1fb + est2fb : est1 + est2,
+        estRaw: est1 + est2,
+        estForSoli: est1fb + est2fb,
+        kindergeld: fbWins ? 0 : kg,
+        freibetragWins: fbWins,
+      };
     } else {
       fcS = familyCalc(zvGes, kinder, sp2, zusammen);
     }
@@ -458,7 +478,7 @@ export default function App({ mode = "standalone" }: { mode?: "standalone" | "em
 
     return {
       zv, zv2, zvGes, zveRaw, entlastung, sv: sv1, sv2, br1,
-      eB: fcB.est, eS: fcS.est, sB, sS, kB, kS,
+      eB: fcB.est, eS: fcS.est, eRawB: fcB.estRaw, eRawS: fcS.estRaw, sB, sS, kB, kS,
       kgB: fcB.kindergeld, kgS: fcS.kindergeld,
       fbWinsB: fcB.freibetragWins, fbWinsS: fcS.freibetragWins,
       estForSoliB: fcB.estForSoli, estForSoliS: fcS.estForSoli,
@@ -547,7 +567,7 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
         {/* HEADER */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${C.text}`, paddingBottom: 10, marginBottom: ss ? 10 : 20, flexWrap: "wrap", gap: 8 }}>
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-.02em" }}>Steuertarif-Simulator <span style={{ fontWeight: 400, color: C.light, fontSize: 13 }}>§32a EStG · VZ 2026</span> <span style={{ fontSize: 9, color: C.border, fontWeight: 400, verticalAlign: "middle" }}>v3.0</span></h1>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-.02em" }}>Steuertarif-Simulator <span style={{ fontWeight: 400, color: C.light, fontSize: 13 }}>§32a EStG · VZ 2026</span> <span style={{ fontSize: 9, color: C.border, fontWeight: 400, verticalAlign: "middle" }}>v3.1</span></h1>
             {!ss && <p style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>Tarifänderungen modellieren · Netto-Impact & Fiskalwirkung berechnen · inkl. Splitting & Kindergeld</p>}
           </div>
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
@@ -568,14 +588,13 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
         {/* CHANGELOG */}
         {showChangelog && <div style={{ background: "#f0f7ff", border: `1px solid ${C.blue}30`, borderRadius: 6, padding: "12px 16px", marginBottom: 14, position: "relative" }}>
           <button onClick={dismissChangelog} style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: C.light, fontSize: 14, fontFamily: FF }}>✕</button>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, marginBottom: 6 }}>Neu in v3.0</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, marginBottom: 6 }}>Neu in v3.1</div>
           <ul style={{ fontSize: 10, color: C.sub, lineHeight: 1.7, margin: 0, paddingLeft: 16 }}>
-            <li>Splitting-Reform: 3 Modi — Splitting / Abschaffen (1 GFB) / Individualbesteuerung (je eigener GFB)</li>
-            <li>Partnereinkommen — Gesamt-Brutto mit Aufteilung auf beide Ehepartner</li>
-            <li>Splittingvorteil-Anzeige mit realer Einkommensverteilung</li>
-            <li>Fiskalschätzung mit gewichteten Paar-Typen (Alleinverdiener, StKl III/V, IV/IV)</li>
-            <li>Klingbeil-Preset (Mittelstandsbauch weg, kein Soli, 49%, Individualbesteuerung)</li>
-            <li>WCAG AA Farbkontrast</li>
+            <li>Transparente Abrechnung: ESt immer vor Kinderfreibetrag — KFB und Kindergeld als eigene Zeilen</li>
+            <li>Warnhinweis wenn Günstigerprüfung (§31) zwischen Status Quo und Szenario kippt</li>
+            <li>Dezil-Tabelle: EStQ (Einkommensteuer-Quote) und SoQ (Soli-Quote) separat ausgewiesen</li>
+            <li>Balkendiagramm: ESt/Soli farblich getrennt dargestellt</li>
+            <li>Bugfix: Parameter-Reset beim Wechsel zwischen Szenarien und Beispielen</li>
           </ul>
         </div>}
 
@@ -839,6 +858,9 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
               <button onClick={composeTweet} style={{ marginTop: 12, background: C.text, color: "#fff", border: "none", borderRadius: 20, padding: "8px 20px", fontSize: 11, fontFamily: FF, fontWeight: 600, cursor: "pointer" }}>
                 🐦 Dieses Ergebnis auf Twitter teilen
               </button>
+              {kinder > 0 && r.fbWinsB !== r.fbWinsS && <div style={{ fontSize: 9, color: C.orange, marginTop: 10 }}>
+                Günstigerprüfung §31 kippt zwischen SQ und Szenario — siehe Abrechnung
+              </div>}
             </div>
 
             {zusammen && r.svB > 0 && <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "12px 16px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -861,7 +883,7 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
 
             {/* KPIs */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
-              {[{ l: "ESt Status Quo", v: `${f(r.eB)} €`, c: C.blue }, { l: "ESt Szenario", v: `${f(r.eS)} €`, c: C.orange }, { l: "Ø Belastung", v: fp(r.aB), c: C.blue }, { l: "Ø Belastung", v: fp(r.aS), c: C.orange }].map((x, i) =>
+              {[{ l: "ESt Status Quo", v: `${f(r.eRawB)} €`, c: C.blue }, { l: "ESt Szenario", v: `${f(r.eRawS)} €`, c: C.orange }, { l: "Ø Belastung", v: fp(r.aB), c: C.blue }, { l: "Ø Belastung", v: fp(r.aS), c: C.orange }].map((x, i) =>
                 <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 5, padding: 10, textAlign: "center" }}>
                   <div style={{ fontSize: 9, color: x.c, fontWeight: 600, marginBottom: 2 }}>{x.l}</div>
                   <div style={{ fontSize: 17, fontWeight: 700, fontFamily: FM }}>{x.v}</div>
@@ -910,15 +932,17 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                 </tr></thead>
                 <tbody>
                 {(() => {
+                  const hasKFB = kinder > 0 && (r.fbWinsB || r.fbWinsS);
                   const rows = [
                     [zusammen ? "Brutto Haushalt" : isSelbst ? "Gewinn" : "Brutto", br, br],
                     ...(!isSelbst ? [["– Sozialversicherung", r.sv.tot + r.sv2.tot, r.sv.tot + r.sv2.tot]] : []),
-                    [r.fbWinsB || r.fbWinsS ? "– ESt (inkl. KFB)" : "– Einkommensteuer", r.eB, r.eS],
+                    ["– Einkommensteuer", hasKFB ? r.eRawB : r.eB, hasKFB ? r.eRawS : r.eS],
+                    ...(hasKFB ? [["– Kinderfreibetrag (§32)", r.fbWinsB ? r.eRawB - r.eB : 0, r.fbWinsS ? r.eRawS - r.eS : 0]] : []),
                     ["– Solidaritätszuschlag", r.sB, r.sS],
                   ];
                   if (kist > 0) rows.push(["– Kirchensteuer", r.kB, r.kS]);
                   if (kinder > 0 && (r.kgB > 0 || r.kgS > 0)) {
-                    rows.push(["+ Kindergeld", -r.kgB, -r.kgS]); // negative = positive for display
+                    rows.push(["+ Kindergeld", -r.kgB, -r.kgS]);
                   }
                   return rows.map(([l, b, s], i) => {
                     const isKg = l.startsWith("+ Kindergeld");
@@ -942,12 +966,17 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                 <tr><td style={{ color: C.light, fontSize: 9, paddingTop: 2 }}>Netto / Monat</td><td style={{ textAlign: "right", color: C.light, fontSize: 9, fontFamily: FM }}>{f(r.nB / 12)} €</td><td style={{ textAlign: "right", color: C.light, fontSize: 9, fontFamily: FM }}>{f(r.nS / 12)} €</td><td style={{ textAlign: "right", color: C.light, fontSize: 9, fontFamily: FM }}>{nd ? `${nd > 0 ? "+" : ""}${f(nd / 12)}` : "–"}</td></tr>
                 </tbody>
               </table>
-              {kinder > 0 && <div style={{ fontSize: 8, color: C.light, marginTop: 6, fontStyle: "italic" }}>
-                {r.fbWinsB !== r.fbWinsS
-                  ? "Günstigerprüfung (§31): SQ und Szenario führen zu unterschiedlichen Ergebnissen."
-                  : r.fbWinsB
-                    ? "Günstigerprüfung (§31): Kinderfreibetrag ist in beiden Varianten günstiger als Kindergeld."
-                    : "Günstigerprüfung (§31): Kindergeld ist in beiden Varianten günstiger. Soli/KiSt trotzdem auf KFB-Basis."
+              {kinder > 0 && r.fbWinsB !== r.fbWinsS && <div style={{ fontSize: 10, color: C.orange, marginTop: 8, padding: "8px 10px", background: "#fef9ef", border: "1px solid #e8dcc8", borderRadius: 4, lineHeight: 1.6 }}>
+                <b>Achtung — Günstigerprüfung (§31) kippt:</b>{" "}
+                {r.fbWinsB
+                  ? <>Im <b style={{ color: C.blue }}>Status Quo</b> ist der <b>Kinderfreibetrag</b> günstiger (kein Kindergeld ausgezahlt). Im <b style={{ color: C.orange }}>Szenario</b> ist das <b>Kindergeld</b> günstiger ({f(r.kgS)} €/Jahr Auszahlung). Die ESt im Szenario ist zwar höher, aber das ausgezahlte Kindergeld kompensiert dies — deshalb kann das Netto trotz höherer ESt steigen.</>
+                  : <>Im <b style={{ color: C.blue }}>Status Quo</b> wird <b>Kindergeld</b> ausgezahlt ({f(r.kgB)} €/Jahr). Im <b style={{ color: C.orange }}>Szenario</b> ist der <b>Kinderfreibetrag</b> günstiger (kein Kindergeld). Die ESt im Szenario sinkt stärker als das entfallene Kindergeld — deshalb kann das Netto trotz fehlendem Kindergeld steigen.</>
+                }
+              </div>}
+              {kinder > 0 && r.fbWinsB === r.fbWinsS && <div style={{ fontSize: 8, color: C.light, marginTop: 6, fontStyle: "italic" }}>
+                {r.fbWinsB
+                  ? "Günstigerprüfung (§31): Kinderfreibetrag ist in beiden Varianten günstiger als Kindergeld."
+                  : "Günstigerprüfung (§31): Kindergeld ist in beiden Varianten günstiger. Soli/KiSt trotzdem auf KFB-Basis."
                 }
               </div>}
             </div>
@@ -960,20 +989,32 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                 <div style={{ fontSize: 26, fontWeight: 700, color: fi.t >= 0 ? C.green : C.red, fontFamily: FM }}>{fm(fi.t)}</div>
                 <div style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 5, fontSize: 9, color: C.sub }}><span>ESt {fm(fi.de)}</span><span>Soli {fm(fi.ds)}</span></div>
               </div>
-              <div style={{ fontSize: 9, color: C.light, marginBottom: 6 }}>Mehr-/Minderbelastung pro Steuerpflichtigen:</div>
-              <div style={{ maxHeight: ss ? 260 : 180, overflowY: "auto" }}>
-                {fi.bk.filter(b => b.z >= 1e4 && b.dp !== 0).map((b, i) => {
-                  const mx2 = Math.max(...fi.bk.map(x => Math.abs(x.dp)), 1);
-                  const w = Math.abs(b.dp) / mx2 * 100, m = b.dp > 0;
-                  return <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2, fontSize: 9 }}>
-                    <span style={{ width: 36, textAlign: "right", color: C.sub, flexShrink: 0, fontFamily: FM }}>{b.z >= 1e6 ? `${(b.z / 1e6).toFixed(0)}M` : `${(b.z / 1e3).toFixed(0)}k`}</span>
-                    <div style={{ flex: 1, height: 5, background: C.border, borderRadius: 2, overflow: "hidden", position: "relative" }}>
-                      <div style={{ position: "absolute", [m ? "left" : "right"]: 0, height: "100%", width: `${Math.min(w, 100)}%`, background: m ? C.red : C.green, borderRadius: 2 }} />
-                    </div>
-                    <span style={{ width: 56, textAlign: "right", color: m ? C.red : C.green, flexShrink: 0, fontFamily: FM }}>{b.dp > 0 ? "+" : ""}{f(b.dp)} €</span>
-                    <span style={{ width: 50, textAlign: "right", color: C.border, flexShrink: 0, fontSize: 8 }}>({f(b.n)})</span>
-                  </div>;
-                })}
+              <div style={{ fontSize: 9, color: C.light, marginBottom: 6 }}>Mehr-/Minderbelastung pro Steuerpflichtigen (zvE):</div>
+              <div>
+                {(() => {
+                  const edges = [0, 15e3, 25e3, 35e3, 50e3, 75e3, 100e3, 150e3, 200e3, 500e3, Infinity];
+                  const bins = edges.slice(0, -1).map((lo, i) => {
+                    const hi = edges[i + 1];
+                    const items = fi.bk.filter(b => b.z > lo && b.z <= hi);
+                    if (items.length === 0) return null;
+                    const totalN = items.reduce((s, b) => s + b.n, 0);
+                    const avgDp = totalN > 0 ? items.reduce((s, b) => s + b.dp * b.n, 0) / totalN : 0;
+                    const label = hi === Infinity ? `>${(lo/1e3).toFixed(0)}k` : lo === 0 ? `≤${(hi/1e3).toFixed(0)}k` : `${(lo/1e3).toFixed(0)}–${hi >= 1e6 ? `${(hi/1e6).toFixed(0)}M` : `${(hi/1e3).toFixed(0)}k`}`;
+                    return { label, dp: Math.round(avgDp), n: totalN };
+                  }).filter(Boolean);
+                  const mx = Math.max(...bins.map(b => Math.abs(b.dp)), 1);
+                  return bins.map((b, i) => {
+                    const w = Math.abs(b.dp) / mx * 100, m = b.dp > 0;
+                    return <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, fontSize: 9 }}>
+                      <span style={{ width: 48, textAlign: "right", color: C.sub, flexShrink: 0, fontFamily: FM }}>{b.label}</span>
+                      <div style={{ flex: 1, height: 7, background: C.border, borderRadius: 2, overflow: "hidden", position: "relative" }}>
+                        <div style={{ position: "absolute", [m ? "left" : "right"]: 0, height: "100%", width: `${Math.min(w, 100)}%`, background: m ? C.red : C.green, borderRadius: 2 }} />
+                      </div>
+                      <span style={{ width: 56, textAlign: "right", color: m ? C.red : C.green, flexShrink: 0, fontFamily: FM, fontWeight: 600 }}>{b.dp > 0 ? "+" : ""}{f(b.dp)} €</span>
+                      <span style={{ width: 44, textAlign: "right", color: C.light, flexShrink: 0, fontSize: 8 }}>{b.n >= 1e6 ? `${(b.n/1e6).toFixed(1)}M` : `${(b.n/1e3).toFixed(0)}k`}</span>
+                    </div>;
+                  });
+                })()}
               </div>
               <div style={{ fontSize: 8, color: C.light, marginTop: 6 }}>Statische Simulation (kein Verhaltenseffekt). {splitMode !== "splitting" ? `Splitting-Effekt: ~31% der Steuerfälle nutzen Splittingtarif (Destatis LuESt 2021). SQ: Alleinverdiener-Annahme. ${splitMode === "individuell" ? "Szenario: Individualbesteuerung mit gewichteter Einkommensaufteilung (22% Alleinverdiener, 39% StKl III/V ~70/30, 36% IV/IV ~52/48, Destatis/Mikrozensus)." : "Szenario: ersatzlose Streichung (1 GFB)."} DIW (2020) schätzt ~25,6 Mrd. € Mindereinnahmen p.a.` : "Grundtarif für alle Steuerpflichtigen — kein Splitting (~31% nutzen Splittingtarif)."} Kein Kindergeld/KFB (~10 Mio. Steuerpflichtige mit Kindern). Einkommensverteilung: Destatis LuESt 2021 (≈42,5 Mio., nicht inflationsbereinigt auf 2026). Grobe Schätzung — tatsächliche Aufkommenswirkung kann ±10–20% abweichen.</div>
             </div>
@@ -991,17 +1032,31 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
             {/* DECILES */}
             <div style={cd}>
               <h3 style={st}>Steuerlastverteilung nach Dezilen</h3>
-              <div style={{ fontSize: 9, color: C.light, marginBottom: 10 }}>Anteil am Gesamtaufkommen (ESt + Soli) — kumuliert von den höchsten Einkommen abwärts</div>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
-                <thead><tr style={{ borderBottom: `2px solid ${C.text}` }}>
+              <div style={{ fontSize: 9, color: C.light, marginBottom: 6 }}>Anteil am Gesamtaufkommen — kumuliert von den höchsten Einkommen abwärts</div>
+              <div style={{ fontSize: 8, color: C.sub, marginBottom: 10, lineHeight: 1.5 }}>
+                <b>EStQ</b> = Anteil am Einkommensteuer-Aufkommen · <b>SoQ</b> = Anteil am Solidaritätszuschlag · <b>kum.</b> = kumuliert (ESt+Soli)
+              </div>
+              <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9, minWidth: 520 }}>
+                <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <th colSpan={2}></th>
+                  <th colSpan={3} style={{ textAlign: "center", padding: "2px 0", color: C.blue, fontWeight: 600, fontSize: 8 }}>Status Quo</th>
+                  <th colSpan={3} style={{ textAlign: "center", padding: "2px 0", color: C.orange, fontWeight: 600, fontSize: 8 }}>Szenario</th>
+                  <th></th>
+                </tr>
+                <tr style={{ borderBottom: `2px solid ${C.text}` }}>
                   <th style={{ textAlign: "left", padding: "4px 0", color: C.sub, fontWeight: 500 }}></th>
-                  <th style={{ textAlign: "left", padding: "4px 0", color: C.light, fontWeight: 400 }}>zvE-Bereich</th>
-                  <th style={{ textAlign: "right", padding: "4px 0", color: C.blue, fontWeight: 500 }}>Anteil SQ</th>
-                  <th style={{ textAlign: "right", padding: "4px 0", color: C.blue, fontWeight: 500, fontSize: 8, opacity: .7 }}>kum. SQ</th>
-                  <th style={{ textAlign: "right", padding: "4px 0", color: C.orange, fontWeight: 500 }}>Anteil Sz.</th>
-                  <th style={{ textAlign: "right", padding: "4px 0", color: C.orange, fontWeight: 500, fontSize: 8, opacity: .7 }}>kum. Sz.</th>
+                  <th style={{ textAlign: "left", padding: "4px 0", color: C.light, fontWeight: 400 }}>zvE</th>
+                  <th style={{ textAlign: "right", padding: "4px 0", color: C.blue, fontWeight: 500 }}>EStQ</th>
+                  <th style={{ textAlign: "right", padding: "4px 0", color: C.blue, fontWeight: 500, opacity: .6 }}>SoQ</th>
+                  <th style={{ textAlign: "right", padding: "4px 0", color: C.blue, fontWeight: 600, fontSize: 8 }}>kum.</th>
+                  <th style={{ textAlign: "right", padding: "4px 0", color: C.orange, fontWeight: 500 }}>EStQ</th>
+                  <th style={{ textAlign: "right", padding: "4px 0", color: C.orange, fontWeight: 500, opacity: .6 }}>SoQ</th>
+                  <th style={{ textAlign: "right", padding: "4px 0", color: C.orange, fontWeight: 600, fontSize: 8 }}>kum.</th>
                   <th style={{ textAlign: "right", padding: "4px 0", color: C.sub, fontWeight: 500 }}>Δ pp</th>
-                </tr></thead>
+                </tr>
+                </thead>
                 <tbody>
                 {(() => {
                   const reversed = [...deciles].reverse();
@@ -1013,9 +1068,11 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                     return <tr key={i} style={{ borderBottom: `1px solid ${C.border}`, background: isTop ? "#f8f6f2" : "transparent" }}>
                       <td style={{ padding: "4px 0", color: C.text, fontWeight: isTop ? 700 : 500, fontFamily: FM, fontSize: isTop ? 10 : 9 }}>{d.i === 10 ? "Top 10%" : `${d.i}. Dezil`}</td>
                       <td style={{ padding: "4px 0", color: C.light, fontFamily: FM }}>{d.zMin >= 1e6 ? `${(d.zMin/1e6).toFixed(1)}M` : `${(d.zMin/1e3).toFixed(0)}k`}–{d.zMax >= 1e6 ? `${(d.zMax/1e6).toFixed(1)}M` : `${(d.zMax/1e3).toFixed(0)}k`}</td>
-                      <td style={{ textAlign: "right", fontFamily: FM }}>{(d.pctB * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: "right", fontFamily: FM }}>{(d.pctEstB * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: "right", fontFamily: FM, opacity: .6 }}>{(d.pctSolB * 100).toFixed(1)}%</td>
                       <td style={{ textAlign: "right", fontFamily: FM, fontWeight: 600, color: C.blue }}>{(cumB * 100).toFixed(1)}%</td>
-                      <td style={{ textAlign: "right", fontFamily: FM }}>{(d.pctS * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: "right", fontFamily: FM }}>{(d.pctEstS * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: "right", fontFamily: FM, opacity: .6 }}>{(d.pctSolS * 100).toFixed(1)}%</td>
                       <td style={{ textAlign: "right", fontFamily: FM, fontWeight: 600, color: C.orange }}>{(cumS * 100).toFixed(1)}%</td>
                       <td style={{ textAlign: "right", color: dp > 0.05 ? C.red : dp < -0.05 ? C.green : C.light, fontFamily: FM }}>{dp > 0 ? "+" : ""}{dp.toFixed(1)}</td>
                     </tr>;
@@ -1023,20 +1080,30 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                 })()}
                 </tbody>
               </table>
+              </div>
               {/* Bars */}
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 9, color: C.sub, marginBottom: 6, fontWeight: 600 }}>Kumulierte Steuerlast (von oben nach unten)</div>
                 {(() => {
                   const reversed = [...deciles].reverse();
-                  let cumB = 0, cumS = 0;
+                  let cumB = 0, cumS = 0, sumEstB = 0, sumSolB = 0, sumEstS = 0, sumSolS = 0;
+                  const totB = deciles.reduce((s, d) => s + d.tB, 0), totS = deciles.reduce((s, d) => s + d.tS, 0);
                   return reversed.map((d, i) => {
                     cumB += d.pctB; cumS += d.pctS;
+                    sumEstB += d.estB || 0; sumSolB += d.solB || 0;
+                    sumEstS += d.estS || 0; sumSolS += d.solS || 0;
                     const label = d.i === 10 ? "Top 10%" : `Top ${(10 - d.i + 1) * 10}%`;
+                    const cumEstPctB = totB > 0 ? sumEstB / totB : 0;
+                    const cumSolPctB = totB > 0 ? sumSolB / totB : 0;
+                    const cumEstPctS = totS > 0 ? sumEstS / totS : 0;
+                    const cumSolPctS = totS > 0 ? sumSolS / totS : 0;
                     return <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
                       <span style={{ width: 52, fontSize: 8, color: C.sub, textAlign: "right", flexShrink: 0, fontFamily: FM }}>{label}</span>
                       <div style={{ flex: 1, position: "relative", height: 14, background: C.tag, borderRadius: 2, overflow: "hidden" }}>
-                        <div style={{ position: "absolute", left: 0, top: 0, height: "50%", width: `${Math.min(cumB * 100, 100)}%`, background: C.blue, borderRadius: "2px 2px 0 0", opacity: .7 }} />
-                        <div style={{ position: "absolute", left: 0, bottom: 0, height: "50%", width: `${Math.min(cumS * 100, 100)}%`, background: C.orange, borderRadius: "0 0 2px 2px", opacity: .7 }} />
+                        <div style={{ position: "absolute", left: 0, top: 0, height: "50%", width: `${Math.min(cumEstPctB * 100, 100)}%`, background: C.blue, borderRadius: "2px 2px 0 0", opacity: .7 }} />
+                        <div style={{ position: "absolute", left: `${Math.min(cumEstPctB * 100, 100)}%`, top: 0, height: "50%", width: `${Math.min(cumSolPctB * 100, 100)}%`, background: C.blue, borderRadius: 0, opacity: .35 }} />
+                        <div style={{ position: "absolute", left: 0, bottom: 0, height: "50%", width: `${Math.min(cumEstPctS * 100, 100)}%`, background: C.orange, borderRadius: "0 0 2px 2px", opacity: .7 }} />
+                        <div style={{ position: "absolute", left: `${Math.min(cumEstPctS * 100, 100)}%`, bottom: 0, height: "50%", width: `${Math.min(cumSolPctS * 100, 100)}%`, background: C.orange, borderRadius: 0, opacity: .35 }} />
                       </div>
                       <span style={{ width: 34, fontSize: 8, color: C.blue, textAlign: "right", flexShrink: 0, fontFamily: FM, fontWeight: 600 }}>{(cumB * 100).toFixed(0)}%</span>
                       <span style={{ width: 34, fontSize: 8, color: C.orange, textAlign: "right", flexShrink: 0, fontFamily: FM, fontWeight: 600 }}>{(cumS * 100).toFixed(0)}%</span>
@@ -1044,12 +1111,14 @@ input[type=range]{height:4px;border-radius:2px;background:${C.border};-webkit-ap
                   });
                 })()}
                 <div style={{ display: "flex", gap: 14, marginTop: 6, fontSize: 8, color: C.light }}>
-                  <span><span style={{ display: "inline-block", width: 8, height: 8, background: C.blue, borderRadius: 1, marginRight: 3, verticalAlign: "middle", opacity: .7 }}></span>Status Quo</span>
-                  <span><span style={{ display: "inline-block", width: 8, height: 8, background: C.orange, borderRadius: 1, marginRight: 3, verticalAlign: "middle", opacity: .7 }}></span>Szenario</span>
+                  <span><span style={{ display: "inline-block", width: 8, height: 8, background: C.blue, borderRadius: 1, marginRight: 3, verticalAlign: "middle", opacity: .7 }}></span>ESt</span>
+                  <span><span style={{ display: "inline-block", width: 8, height: 8, background: C.blue, borderRadius: 1, marginRight: 3, verticalAlign: "middle", opacity: .35 }}></span>Soli</span>
+                  <span style={{ marginLeft: 8 }}><span style={{ display: "inline-block", width: 8, height: 8, background: C.orange, borderRadius: 1, marginRight: 3, verticalAlign: "middle", opacity: .7 }}></span>ESt (Sz.)</span>
+                  <span><span style={{ display: "inline-block", width: 8, height: 8, background: C.orange, borderRadius: 1, marginRight: 3, verticalAlign: "middle", opacity: .35 }}></span>Soli (Sz.)</span>
                 </div>
               </div>
               <div style={{ fontSize: 8, color: C.light, marginTop: 8 }}>
-                Dezile basierend auf ~42,5 Mio. Steuerpflichtigen, sortiert nach zvE. Kumuliert = "Top X% tragen Y% des Aufkommens". Δ pp = Veränderung in Prozentpunkten.
+                Dezile basierend auf ~42,5 Mio. Steuerpflichtigen, sortiert nach zvE. kum. = "Top X% tragen Y% des Aufkommens". Δ pp = Veränderung in Prozentpunkten.
               </div>
             </div>
 
